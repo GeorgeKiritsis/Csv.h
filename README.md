@@ -64,6 +64,7 @@ Copy `csv.h` into your tree. There is nothing to build, configure or link.
 - [Performance](#performance)
 - [Footprint](#footprint)
 - [Portability and configuration](#portability-and-configuration)
+- [Using from C++ and CMake](#using-from-c-and-cmake)
 - [Verification](#verification)
 - [API](#api)
 - [Implementation notes](#implementation-notes)
@@ -107,6 +108,137 @@ Everything in it is a dozen lines or less: the reading section is
 `csv_write_cstr()` + `csv_write_row_end()`, errors are read off the reader's
 `err` / `line` / `row` / `col` fields, and the TSV dialect is one assignment to
 `csv_opts.delimiter`. The sections below cover each in depth.
+
+<details>
+<summary><b>Show the full demo source</b></summary>
+
+```c
+#define CSV_IMPLEMENTATION
+#include "csv.h"
+
+#include <stdio.h>
+
+/* Fields are not NUL-terminated, so numbers are parsed from (ptr, len). */
+static long to_long(csv_str s)
+{
+    long   v = 0;
+    size_t i;
+    for (i = 0; i < s.len; i++) v = v * 10 + (s.ptr[i] - '0');
+    return v;
+}
+
+/* Reading: in-place mode on a buffer we own. The document has everything the
+ * format can throw at you: a UTF-8 BOM, a quoted delimiter, escaped quotes, a
+ * field spanning two lines, and a short row. */
+static void demo_reading(void)
+{
+    static char doc[] =
+        "\xEF\xBB\xBF" "id,product,note,qty\n"
+        "1,\"Widget, large\",\"says \"\"hello\"\"\",12\n"
+        "2,Gadget,\"multi\nline note\",7\n"
+        "3,Doohickey\n";
+
+    csv_reader rd;
+    csv_str    row[8];
+    size_t     n, qty, r = 0;
+    long       total = 0;
+
+    puts("== reading =====================================================");
+    csv_reader_init_mut(&rd, NULL, doc, sizeof doc - 1);
+
+    if (csv_next_row(&rd, row, CSV_ARRAY_LEN(row), &n) != CSV_EVENT_ROW) return;
+    qty = csv_find(row, n, "qty");
+    printf("  columns: id=%zu product=%zu qty=%zu"
+           "  (BOM was eaten: first header is \"" CSV_FMT "\")\n",
+           csv_find(row, n, "id"), csv_find(row, n, "product"), qty,
+           CSV_ARG(row[0]));
+
+    csv_foreach_row (&rd, row, nf) {
+        size_t i;
+        printf("  row %zu (%zu fields):", ++r, nf);
+        for (i = 0; i < nf; i++) printf(" [" CSV_FMT "]", CSV_ARG(row[i]));
+        if (nf > qty) total += to_long(row[qty]);
+        else          printf("   <- no qty in this row");
+        putchar('\n');
+    }
+    printf("  total qty: %ld\n\n", total);
+}
+
+/* Writing: fields are quoted only when they need to be, quotes are doubled. */
+static void demo_writing(void)
+{
+    char       buf[256];
+    csv_writer w;
+
+    puts("== writing =====================================================");
+    csv_writer_init(&w, buf, sizeof buf, NULL);
+    csv_write_cstr(&w, "id"); csv_write_cstr(&w, "description");
+    csv_write_row_end(&w);
+    csv_write_cstr(&w, "1");  csv_write_cstr(&w, "needs, a comma");
+    csv_write_row_end(&w);
+    csv_write_cstr(&w, "2");  csv_write_cstr(&w, "he said \"hi\"");
+    csv_write_row_end(&w);
+
+    fwrite(buf, 1, w.len, stdout);
+    printf("  (%zu bytes written, err=%s)\n\n", w.len, csv_strerror(w.err));
+}
+
+/* Errors: sticky, located, and never fatal to the process. */
+static void demo_errors(void)
+{
+    static char doc[] = "ok,fine\nx,\"oops";
+
+    csv_reader rd;
+    csv_str    row[8];
+    size_t     n;
+    csv_event  e;
+
+    puts("== errors ======================================================");
+    csv_reader_init_mut(&rd, NULL, doc, sizeof doc - 1);
+
+    while ((e = csv_next_row(&rd, row, CSV_ARRAY_LEN(row), &n)) == CSV_EVENT_ROW)
+        printf("  ok: %zu fields\n", n);
+
+    if (e == CSV_EVENT_ERROR)
+        printf("  stopped at line %zu, record %zu, field %zu: %s\n",
+               rd.line, rd.row + 1, rd.col + 1, csv_strerror(rd.err));
+
+    printf("  still failed on the next call: %s\n\n",
+           csv_event_name(csv_next(&rd)));
+}
+
+/* Dialects: every option lives in csv_opts; here, tab-separated values. */
+static void demo_dialects(void)
+{
+    static char doc[] = "name\tcity\nAda\tAthens\n";
+
+    csv_opts   o = csv_opts_default();
+    csv_reader rd;
+    csv_str    row[8];
+
+    puts("== dialects ====================================================");
+    o.delimiter = '\t';
+    csv_reader_init_mut(&rd, &o, doc, sizeof doc - 1);
+
+    csv_foreach_row (&rd, row, n) {
+        size_t i;
+        printf("  tsv:");
+        for (i = 0; i < n; i++) printf(" [" CSV_FMT "]", CSV_ARG(row[i]));
+        putchar('\n');
+    }
+}
+
+int main(void)
+{
+    demo_reading();
+    demo_writing();
+    demo_errors();
+    demo_dialects();
+    return 0;
+}
+```
+
+</details>
 
 ## Rationale
 
@@ -430,6 +562,49 @@ no floating point, no 64-bit division, no atomics.
 Assertions mark caller contract violations — feeding a reader mid-record,
 setting a delimiter equal to the quote — not input errors. Bad input is always a
 returned `csv_error`. Compiling with `NDEBUG` is safe.
+
+## Using from C++ and CMake
+
+The header compiles clean as C++11 and C++17 (it is `extern "C"` internally and
+CI builds it with gcc, clang and MSVC `/TP`), so C++ needs no wrapper — the
+same two lines, in exactly one `.cpp` file:
+
+```cpp
+#define CSV_IMPLEMENTATION
+#include "csv.h"
+
+// csv_str converts naturally:
+std::string_view view(rd.field.ptr, rd.field.len);   // borrow (C++17)
+std::string      copy(rd.field.ptr, rd.field.len);   // own
+```
+
+There is deliberately no build system to integrate — for CMake projects the
+whole "integration" is an interface library over the directory you dropped the
+header in:
+
+```cmake
+# after copying csv.h into third_party/csv/
+add_library(csv_h INTERFACE)
+target_include_directories(csv_h INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/csv)
+
+target_link_libraries(your_app PRIVATE csv_h)
+```
+
+Or have CMake fetch a pinned release for you (CMake ≥ 3.18):
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(csv_h_src
+  GIT_REPOSITORY https://github.com/GeorgeKiritsis/Csv.h
+  GIT_TAG        v1.0.0)
+FetchContent_MakeAvailable(csv_h_src)
+
+add_library(csv_h INTERFACE)
+target_include_directories(csv_h INTERFACE ${csv_h_src_SOURCE_DIR})
+```
+
+Remember that `CSV_IMPLEMENTATION` goes in one translation unit per final
+binary, the same rule as in C (`make multi` covers the two-TU case in CI).
 
 ## Verification
 
