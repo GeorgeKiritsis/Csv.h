@@ -22,10 +22,10 @@
 
 ## Why csv.h?
 
-- **one C99 header** — nothing to build, configure or link
-- **zero allocations in the core** — the reader and writer never call `malloc`
-- **zero-copy** — fields are pointers into your buffer, not copies
-- **streaming** — arbitrarily large files through a fixed window
+- **one C99 header**: nothing to build, configure or link
+- **zero allocations in the core**: the reader and writer never call `malloc`
+- **zero-copy**: fields are pointers into your buffer, not copies
+- **streaming**: arbitrarily large files through a fixed window
 - **RFC 4180 compliant**, plus the dialect knobs real-world files need
 - **optional table API** for when you do want `malloc` to do the work
 - **fuzzed and sanitizer-clean**, verified against csv-spectrum and Python's `csv`
@@ -53,9 +53,9 @@ Copy `csv.h` into your tree. There is nothing to build, configure or link.
 - [Rationale](#rationale)
 - [Contract](#contract)
 - [Reading](#reading)
-  - [Mode 1 — a buffer you own](#mode-1--a-buffer-you-own)
-  - [Mode 2 — a buffer you must not modify](#mode-2--a-buffer-you-must-not-modify)
-  - [Mode 3 — streaming through a window](#mode-3--streaming-through-a-window)
+  - [Mode 1: a buffer you own](#mode-1-a-buffer-you-own)
+  - [Mode 2: a buffer you must not modify](#mode-2-a-buffer-you-must-not-modify)
+  - [Mode 3: streaming through a window](#mode-3-streaming-through-a-window)
   - [Object lifetimes](#object-lifetimes)
 - [Writing](#writing)
 - [Table layer](#table-layer-optional)
@@ -69,12 +69,13 @@ Copy `csv.h` into your tree. There is nothing to build, configure or link.
 - [API](#api)
 - [Implementation notes](#implementation-notes)
 - [Non-goals](#non-goals)
+- [Contributing](#contributing)
 - [License](#license)
 
 ## Demo
 
-`make demo`, or just `cc -std=c99 examples/demo.c -o demo && ./demo` — one
-screen showing the whole surface: reading (BOM, quoted delimiters, escaped
+`make demo`, or just `cc -std=c99 examples/demo.c -o demo && ./demo`. One
+screen shows the whole surface: reading (BOM, quoted delimiters, escaped
 quotes, multi-line fields, ragged rows), writing, error reporting and dialects.
 The source is [`examples/demo.c`](examples/demo.c); this is its output:
 
@@ -242,13 +243,12 @@ int main(void)
 
 ## Rationale
 
-The single-header, zero-copy design that modern parser libraries get right
-already exists for CSV — in C++. csv.h carries that design philosophy into
-portable C99: an allocation-free core, fields as pointers into memory you
-already own, and streaming as an explicit contract between you and the parser
-rather than an internal buffer you cannot see.
+Good single-header, zero-copy CSV parsers exist, but they are written in C++.
+csv.h brings that approach to portable C99: an allocation-free core, fields as
+pointers into memory you already own, and streaming as an explicit contract
+instead of an internal buffer you cannot see.
 
-Concretely, against the two libraries you would otherwise reach for:
+Against the two libraries you would otherwise reach for:
 
 | | [fast-cpp-csv-parser](https://github.com/ben-strasser/fast-cpp-csv-parser) | [libcsv](https://github.com/rgamble/libcsv) | csv.h |
 | --- | --- | --- | --- |
@@ -259,12 +259,11 @@ Concretely, against the two libraries you would otherwise reach for:
 | allocation | internal buffering | copies every field into a growing buffer | none in the core |
 | streaming | reads the file itself | yes, via callbacks | explicit sliding window; you own the I/O |
 
-None of that is a criticism. fast-cpp-csv-parser is an excellent choice when
-you are in C++ and want the library to own the file. csv.h exists for when you
-cannot be: plain C codebases, firmware, statically linked proprietary binaries
-where LGPL is awkward, `mmap`'d or `const` buffers, and event loops that
-already own the I/O. Same philosophy, different constraints — and the
-constraints are the point.
+None of that is a criticism. fast-cpp-csv-parser is a fine choice if you are
+in C++ and want the library to own the file. csv.h is for the cases where that
+does not hold: plain C codebases, firmware, statically linked proprietary
+binaries where LGPL is awkward, `mmap`'d or `const` buffers, and event loops
+that already own the I/O.
 
 ## Contract
 
@@ -283,7 +282,7 @@ constraints are the point.
 
 Three modes, distinguished only by who owns the bytes.
 
-### Mode 1 — a buffer you own
+### Mode 1: a buffer you own
 
 The default choice. Un-escaping `""` strictly shortens a field, so when the
 buffer is yours and writable the parser rewrites those fields in place. No
@@ -303,11 +302,11 @@ if (rd.err)
     fprintf(stderr, "line %zu: %s\n", rd.line, csv_strerror(rd.err));
 ```
 
-Fields remain valid as long as `buf` does — the whole document, not one record.
+Fields remain valid as long as `buf` does: the whole document, not one record.
 The mode needs the entire document up front, so it does not compose with
 streaming; `csv_reader_feed()` asserts on that.
 
-### Mode 2 — a buffer you must not modify
+### Mode 2: a buffer you must not modify
 
 `mmap(PROT_READ)`, `.rodata`, a caller's const buffer. Give the parser scratch
 for the fields that need un-escaping and it will leave your input alone:
@@ -330,7 +329,7 @@ none; you get `CSV_ERR_NO_SPACE` rather than a surprise if you were wrong. The
 scratch is a bump allocator rewound at each record, so it needs to hold the
 widest record, not the file.
 
-### Mode 3 — streaming through a window
+### Mode 3: streaming through a window
 
 The parser never buffers input. On a short read it reports how much of your
 window it is finished with; you slide the tail down and refill:
@@ -366,7 +365,7 @@ while (!eof) {
 ```
 
 A record must fit in the window. `csv_consumed()` returning 0 on a full window
-means this one does not — `realloc` and feed again. `examples/csvcat.c` does
+means this one does not; `realloc` and feed again. `examples/csvcat.c` does
 exactly that, so it has no maximum record size; it has been run against a single
 300 KB field through a 64 KiB initial window.
 
@@ -402,8 +401,8 @@ fwrite(buf, 1, w.len, stdout);
 /* name,"he said ""hi"", loudly" */
 ```
 
-A field is quoted when it must be — delimiter, quote, CR, LF, or a leading or
-trailing blank — or always under `CSV_FLAG_QUOTE_ALL`.
+A field is quoted when it must be (delimiter, quote, CR, LF, or a leading or
+trailing blank), or always under `CSV_FLAG_QUOTE_ALL`.
 
 On overflow the writer stops at the buffer end, sets `CSV_ERR_NO_SPACE`, and
 keeps accumulating `w.needed`, so one retry with `needed` bytes always fits;
@@ -413,7 +412,7 @@ keeps accumulating `w.needed`, so one retry with `needed` bytes always fits;
 csv_writer_sink(&w, csv_sink_file, stdout);   /* size_t (*)(void*, const char*, size_t) */
 ```
 
-With a sink the buffer is just a staging area — a 4-byte one works, and writes
+With a sink the buffer is just a staging area; a 4-byte one works, and writes
 larger than the buffer bypass it entirely.
 
 ## Table layer (optional)
@@ -434,8 +433,8 @@ if (csv_table_load(&t, "sales.csv", NULL) == CSV_OK) {
 
 Ragged input is represented, not padded: `csv_table_ncols(&t, i)` is the real
 width and `csv_table_at()` returns an empty field out of range instead of
-indexing past the row. Four live allocations for a whole document — text,
-un-escape arena, cell array, row index — and `csv_table_parse()` borrows your
+indexing past the row. Four live allocations for a whole document (text,
+un-escape arena, cell array, row index), and `csv_table_parse()` borrows your
 buffer rather than copying it.
 
 ## Dialects
@@ -461,8 +460,8 @@ o.flags      = CSV_FLAG_TRIM | CSV_FLAG_SKIP_EMPTY;
 | `CSV_FLAG_QUOTE_ALL` | writer: quote unconditionally |
 
 `escape` is a read-side option; the writer always doubles quotes, which every
-dialect accepts. It is free when unset — the default scan never tests for an
-escape byte.
+dialect accepts. It costs nothing when unset: the default scan never tests for
+an escape byte.
 
 ## Malformed input
 
@@ -492,7 +491,7 @@ byte-exact round trips.
 
 `make bench-vs`. Both parsers walk the same 64 MB document and fold every field
 byte into a checksum. gcc 13 `-O2`, one core of a 2.8 GHz Xeon, medians of five
-runs on a shared VM — call it ±10%.
+runs on a shared VM, so call it ±10%.
 
 | Workload | csv.h | libcsv 3.0.3 | |
 | --- | ---: | ---: | ---: |
@@ -509,7 +508,7 @@ into memory you already have and only rewrites fields containing `""`. On long
 fields it also scans with `memchr` instead of a per-byte state machine.
 
 SIMD parsers in C++ reach several GB/s. If throughput is the only axis you care
-about, use one of those — this is a scalar parser that happens to be quick.
+about, use one of those; this is a scalar parser that happens to be quick.
 
 ## Footprint
 
@@ -546,7 +545,7 @@ on a part with 2 KB of RAM, given a window to point it at.
 
 C99 or later; also compiles clean as C++11 and C++17. gcc, clang and MSVC.
 Nothing outside `<stddef.h>`, `<limits.h>` and five `mem*` calls is required
-once `CSV_NO_ALLOC` and `CSV_NO_STDIO` are set — no `<stdio.h>`, no `<stdlib.h>`,
+once `CSV_NO_ALLOC` and `CSV_NO_STDIO` are set: no `<stdio.h>`, no `<stdlib.h>`,
 no floating point, no 64-bit division, no atomics.
 
 | Macro | Effect |
@@ -559,15 +558,15 @@ no floating point, no 64-bit division, no atomics.
 | `CSV_MEMCPY` `CSV_MEMMOVE` `CSV_MEMCHR` `CSV_MEMCMP` `CSV_MEMSET` | replace `<string.h>` |
 | `CSV_MALLOC` `CSV_REALLOC` `CSV_FREE` | replace `<stdlib.h>` |
 
-Assertions mark caller contract violations — feeding a reader mid-record,
-setting a delimiter equal to the quote — not input errors. Bad input is always a
+Assertions mark caller contract violations (feeding a reader mid-record,
+setting a delimiter equal to the quote), not input errors. Bad input is always a
 returned `csv_error`. Compiling with `NDEBUG` is safe.
 
 ## Using from C++ and CMake
 
 The header compiles clean as C++11 and C++17 (it is `extern "C"` internally and
-CI builds it with gcc, clang and MSVC `/TP`), so C++ needs no wrapper — the
-same two lines, in exactly one `.cpp` file:
+CI builds it with gcc, clang and MSVC `/TP`), so C++ needs no wrapper. The
+same two lines go in exactly one `.cpp` file:
 
 ```cpp
 #define CSV_IMPLEMENTATION
@@ -578,9 +577,8 @@ std::string_view view(rd.field.ptr, rd.field.len);   // borrow (C++17)
 std::string      copy(rd.field.ptr, rd.field.len);   // own
 ```
 
-There is deliberately no build system to integrate — for CMake projects the
-whole "integration" is an interface library over the directory you dropped the
-header in:
+There is no build system to integrate. For CMake projects, an interface
+library over the directory that holds the header is all it takes:
 
 ```cmake
 # after copying csv.h into third_party/csv/
@@ -628,7 +626,7 @@ been thrown at it:
   re-fed 1, 2, 3, 4 and 5 bytes at a time. A document must parse identically
   however it is sliced.
 - **csv-spectrum 11/11.** The community acid-test corpus, vendored under
-  `tests/spectrum/` and checked in all three modes — buffer, in-place, and
+  `tests/spectrum/` and checked in all three modes: buffer, in-place, and
   streamed a byte at a time. `make spectrum-fetch` re-downloads it from upstream
   and diffs, so you need not take the vendored copies on trust.
 - **libFuzzer**, asserting three properties per input: no crash,
@@ -693,7 +691,7 @@ The price is re-parsing one partial record per refill.
 
 **The state machine always sees a whole record.** On a short read the parser
 rewinds to the record boundary rather than suspending mid-field, so there are no
-cross-chunk continuation states — the entire class of "field split across a
+cross-chunk continuation states, so the entire class of "field split across a
 chunk boundary" bugs does not exist to be tested for.
 
 **Scratch is a per-record bump allocator.** That bounds it by the widest record
@@ -720,6 +718,15 @@ would need a decision about your data belongs on your side of the boundary.
 
 Also not done, but not refused: SIMD scanning, `mmap` helpers, a Windows-1252 /
 UTF-16 front end.
+
+## Contributing
+
+Contributions and pull requests are more than welcome, and so are bug reports.
+If you are planning something bigger than a fix, open an issue first so we can
+talk it through. Before sending a PR, run `make check` (it is what CI runs),
+and add a test if you touched the parser; `make fuzz-run` is a good idea for
+parser changes too. Keep in mind the non-goals above: features that need a
+decision about your data belong on the caller's side of the boundary.
 
 ## License
 
