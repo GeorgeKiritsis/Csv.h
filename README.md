@@ -243,12 +243,13 @@ int main(void)
 
 ## Rationale
 
-Good single-header, zero-copy CSV parsers exist, but they are written in C++.
-csv.h brings that approach to portable C99: an allocation-free core, fields as
-pointers into memory you already own, and streaming as an explicit contract
-instead of an internal buffer you cannot see.
+csv.h is a single-header, MIT-licensed C99 CSV library with a zero-allocation
+core, zero-copy fields, and streaming support. Each of those is a design
+constraint, not a checkbox: the core never calls `malloc`, a field is a
+pointer into memory you already own, and streaming is an explicit contract
+between you and the parser instead of an internal buffer you cannot see.
 
-Against the two libraries you would otherwise reach for:
+Against two libraries you might otherwise reach for:
 
 | | [fast-cpp-csv-parser](https://github.com/ben-strasser/fast-cpp-csv-parser) | [libcsv](https://github.com/rgamble/libcsv) | csv.h |
 | --- | --- | --- | --- |
