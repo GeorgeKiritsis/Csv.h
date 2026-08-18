@@ -36,6 +36,7 @@ Copy `csv.h` into your tree. There is nothing to build, configure or link.
 
 ## Contents
 
+- [Demo](#demo)
 - [Rationale](#rationale)
 - [Contract](#contract)
 - [Reading](#reading)
@@ -55,6 +56,44 @@ Copy `csv.h` into your tree. There is nothing to build, configure or link.
 - [Implementation notes](#implementation-notes)
 - [Non-goals](#non-goals)
 - [License](#license)
+
+## Demo
+
+`make demo`, or just `cc -std=c99 examples/demo.c -o demo && ./demo` — one
+screen showing the whole surface: reading (BOM, quoted delimiters, escaped
+quotes, multi-line fields, ragged rows), writing, error reporting and dialects.
+The source is [`examples/demo.c`](examples/demo.c); this is its output:
+
+```
+== reading =====================================================
+  columns: id=0 product=1 qty=3  (BOM was eaten: first header is "id")
+  row 1 (4 fields): [1] [Widget, large] [says "hello"] [12]
+  row 2 (4 fields): [2] [Gadget] [multi
+line note] [7]
+  row 3 (2 fields): [3] [Doohickey]   <- no qty in this row
+  total qty: 19
+
+== writing =====================================================
+id,description
+1,"needs, a comma"
+2,"he said ""hi"""
+  (53 bytes written, err=ok)
+
+== errors ======================================================
+  ok: 2 fields
+  stopped at line 2, record 2, field 2: unterminated quoted field
+  still failed on the next call: error
+
+== dialects ====================================================
+  tsv: [name] [city]
+  tsv: [Ada] [Athens]
+```
+
+Everything in it is a dozen lines or less: the reading section is
+`csv_reader_init_mut()` + `csv_foreach_row`, the writing section is
+`csv_write_cstr()` + `csv_write_row_end()`, errors are read off the reader's
+`err` / `line` / `row` / `col` fields, and the TSV dialect is one assignment to
+`csv_opts.delimiter`. The sections below cover each in depth.
 
 ## Rationale
 

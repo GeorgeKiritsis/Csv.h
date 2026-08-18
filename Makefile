@@ -12,7 +12,7 @@ CFLAGS  ?= -O2
 B        = build
 
 .PHONY: all test spectrum spectrum-fetch check asan strict cxx multi fuzz \
-        fuzz-run examples bench bench-vs measure diff clean
+        fuzz-run examples demo bench bench-vs measure diff clean
 
 all: test
 
@@ -82,8 +82,14 @@ fuzz-run: fuzz
 
 # --------------------------------------------------------------- examples
 examples: $(B)
+	$(CC) -std=c99 $(WARN) $(CFLAGS) -o $(B)/demo      examples/demo.c
 	$(CC) -std=c99 $(WARN) $(CFLAGS) -o $(B)/csvcat    examples/csvcat.c
 	$(CC) -std=c99 $(WARN) $(CFLAGS) -o $(B)/csvselect examples/csvselect.c
+
+# The guided tour: reading, writing, errors and dialects in one screen.
+demo: $(B)
+	$(CC) -std=c99 $(WARN) $(CFLAGS) -o $(B)/demo examples/demo.c
+	@$(B)/demo
 
 # Struct sizes, .text size, worst-case stack frame: the numbers in the README.
 measure:

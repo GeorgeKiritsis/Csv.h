@@ -485,10 +485,12 @@ CSV_API const char *csv_event_name(csv_event e)
 CSV_API csv_opts csv_opts_default(void)
 {
     csv_opts o;
-    o.delimiter = ',';
-    o.quote     = '"';
-    o.comment   = 0;
-    o.flags     = CSV_FLAG_NONE;
+    o.delimiter  = ',';
+    o.quote      = '"';
+    o.comment    = 0;
+    o.escape     = 0;
+    o.flags      = CSV_FLAG_NONE;
+    o.skip_lines = 0;
     return o;
 }
 
@@ -770,7 +772,7 @@ CSV_INLINE size_t csv__unescape(const csv_reader *r, char *dst, size_t from,
 
     while (i < to) {
         char c = b[i];
-        if (c == e && i + 1 <= to) { dst[w++] = b[i + 1]; i += 2; continue; }
+        if (c == e && i + 1 < to)  { dst[w++] = b[i + 1]; i += 2; continue; }
         if (quoted && c == q)      { dst[w++] = q;        i += 2; continue; }
         dst[w++] = c;
         i++;
