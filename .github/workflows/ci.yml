@@ -1,0 +1,40 @@
+name: ci
+
+on: [push, pull_request]
+
+jobs:
+  posix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        cc: [gcc, clang]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: check
+        env:
+          CC: ${{ matrix.cc }}
+        run: make check
+      - name: fuzz (short)
+        if: matrix.cc == 'clang'
+        run: make fuzz-run SECONDS_=120
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: build and run tests with MSVC
+        shell: cmd
+        run: |
+          cl /nologo /W4 /WX /D_CRT_SECURE_NO_WARNINGS /Fe:test_csv.exe tests\test_csv.c
+          test_csv.exe
+          cl /nologo /W4 /WX /D_CRT_SECURE_NO_WARNINGS /Fe:test_spectrum.exe tests\test_spectrum.c
+          test_spectrum.exe
+      - name: single-TU and C++ configurations
+        shell: cmd
+        run: |
+          cl /nologo /W4 /WX /D_CRT_SECURE_NO_WARNINGS /DCSV_STATIC /c tests\core_only.c
+          cl /nologo /W4 /WX /D_CRT_SECURE_NO_WARNINGS /TP /c tests\core_only.c
+          cl /nologo /W4 /WX /D_CRT_SECURE_NO_WARNINGS /DCSV_NO_ALLOC /DCSV_NO_STDIO /c tests\core_only.c

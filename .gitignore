@@ -1,0 +1,9 @@
+build/
+corpus/
+crash-*
+leak-*
+timeout-*
+*.o
+*.exe
+test_tmp.csv
+fuzz-*.log
