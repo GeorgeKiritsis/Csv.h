@@ -110,15 +110,29 @@ Everything in it is a dozen lines or less: the reading section is
 
 ## Rationale
 
-Plenty of CSV parsers exist. This particular combination is harder to find in
-one place: plain C99 rather than C++ (the four CSV entries on the
-`single_file_libs` list are all C++), a single header rather than a build
-system, MIT rather than LGPL (`libcsv`, the best-known C implementation, is
-LGPL-2.1 and autotools — awkward in a statically linked proprietary binary and
-in most firmware), and no allocation unless you opt into it.
+The single-header, zero-copy design that modern parser libraries get right
+already exists for CSV — in C++. csv.h carries that design philosophy into
+portable C99: an allocation-free core, fields as pointers into memory you
+already own, and streaming as an explicit contract between you and the parser
+rather than an internal buffer you cannot see.
 
-csv.h is aimed at that gap: one header, MIT, correct on the pathological
-inputs, and it does not allocate unless you ask it to.
+Concretely, against the two libraries you would otherwise reach for:
+
+| | [fast-cpp-csv-parser](https://github.com/ben-strasser/fast-cpp-csv-parser) | [libcsv](https://github.com/rgamble/libcsv) | csv.h |
+| --- | --- | --- | --- |
+| language | C++11 | C | C99 |
+| license | BSD-3-Clause | LGPL-2.1 | MIT |
+| distribution | single header | autotools project | single header |
+| parsing model | pull; owns file I/O, threaded by default | push; callback per field | pull; events or whole rows |
+| allocation | internal buffering | copies every field into a growing buffer | none in the core |
+| streaming | reads the file itself | yes, via callbacks | explicit sliding window; you own the I/O |
+
+None of that is a criticism. fast-cpp-csv-parser is an excellent choice when
+you are in C++ and want the library to own the file. csv.h exists for when you
+cannot be: plain C codebases, firmware, statically linked proprietary binaries
+where LGPL is awkward, `mmap`'d or `const` buffers, and event loops that
+already own the I/O. Same philosophy, different constraints — and the
+constraints are the point.
 
 ## Contract
 

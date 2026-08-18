@@ -454,7 +454,10 @@ static void test_writer_sink(void)
 
 /* ---------------------------------------------------- round-trip fuzz -- */
 
-static unsigned long g_seed = 88172645463325252ULL;
+/* unsigned long long: 64-bit on every platform, so the random stream (and
+ * therefore the documents tested) is identical everywhere, and MSVC's 32-bit
+ * unsigned long does not truncate the seed under /W4 /WX. */
+static unsigned long long g_seed = 88172645463325252ULL;
 static unsigned rnd(unsigned n)
 {
     g_seed ^= g_seed << 13;

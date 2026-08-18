@@ -17,7 +17,8 @@ jobs:
           CC: ${{ matrix.cc }}
         run: make check
       - name: fuzz (short)
-        if: matrix.cc == 'clang'
+        # Apple clang has no libFuzzer (-fsanitize=fuzzer), so ubuntu only.
+        if: matrix.cc == 'clang' && matrix.os == 'ubuntu-latest'
         run: make fuzz-run SECONDS_=120
 
   windows:

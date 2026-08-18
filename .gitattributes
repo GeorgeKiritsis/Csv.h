@@ -1,0 +1,9 @@
+# Sources are text; let git normalise them to LF in the repository.
+* text=auto
+
+# The csv-spectrum fixtures are byte-exact test vectors. Three of them contain
+# CRLF *inside quoted fields* as content, so any line-ending conversion
+# corrupts the corpus. Never convert them.
+tests/spectrum/*.csv -text
+
+docs/*.png binary
