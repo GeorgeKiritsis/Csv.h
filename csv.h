@@ -928,7 +928,11 @@ CSV_API csv_event csv_next(csv_reader *r)
             if (!(r->opts.flags & CSV_FLAG_KEEP_SCRATCH)) r->scratch_len = 0;
 
             if (!r->bom_done && !(r->opts.flags & CSV_FLAG_NO_BOM)) {
-                static const char bom[3] = { (char)0xEF, (char)0xBB, (char)0xBF };
+                /* A string literal, not {(char)0xEF, ...}: the bytes exceed
+                 * CHAR_MAX where char is signed, and MSVC's C4310 flags the
+                 * casts under /W4 /WX. [] not [3]: C++ needs room for the
+                 * NUL, and memcmp only ever reads the first three bytes. */
+                static const char bom[] = "\xEF\xBB\xBF";
                 if (r->len - r->pos >= 3) {
                     if (CSV_MEMCMP(r->buf + r->pos, bom, 3) == 0) r->pos += 3;
                     r->bom_done = 1;
