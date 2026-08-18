@@ -10,6 +10,8 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/GeorgeKiritsis/Csv.h/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/GeorgeKiritsis/Csv.h?color=2a78d6"></a>
+  <a href="https://github.com/GeorgeKiritsis/Csv.h/actions/workflows/ci.yml"><img alt="ci" src="https://github.com/GeorgeKiritsis/Csv.h/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="C99" src="https://img.shields.io/badge/C99-portable-2a78d6">
   <img alt="single header" src="https://img.shields.io/badge/single%20header-1%20file-2a78d6">
   <img alt="MIT" src="https://img.shields.io/badge/license-MIT-1baf7a">

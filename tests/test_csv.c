@@ -800,7 +800,7 @@ static void test_misc(void)
     CHECK(csv_str_eq(CSV_LIT("abc"), csv_str_make("abc", 3)));
     CHECK(!csv_str_eq(CSV_LIT("abc"), CSV_LIT("abd")));
     CHECK(csv_str_eq(CSV_LIT(""), csv_str_make(NULL, 0)));
-    CHECK(strcmp(CSV_VERSION_STRING, "0.2.0") == 0);
+    CHECK(strcmp(CSV_VERSION_STRING, "1.0.0") == 0);
 }
 
 int main(void)

@@ -2,6 +2,26 @@
 
 All notable changes to csv.h. Versions follow [semver](https://semver.org/).
 
+## 1.0.0
+
+First stable release. The API documented in the README is now covered by
+semver: breaking changes only with a major version bump.
+
+**Added**
+
+- `examples/demo.c` and `make demo` — a one-screen tour of reading, writing,
+  error handling and dialects.
+
+**Fixed**
+
+- `csv_opts_default()` left `escape` and `skip_lines` uninitialised, so any
+  reader or writer given `NULL` options read stack garbage for those two
+  fields and could skip a random number of leading lines or honour a random
+  escape byte.
+- One-byte out-of-bounds read when `opts.escape` is set and an unquoted field
+  containing an earlier escape ends with a lone escape byte at end of input.
+  The trailing escape is now kept literally.
+
 ## 0.2.0
 
 **Added**

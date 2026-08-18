@@ -1,6 +1,6 @@
 /*
  * csv.h - RFC 4180 CSV reader and writer in a single C99 header.
- * https://github.com/<you>/csv.h            v0.2.0            MIT licensed
+ * https://github.com/GeorgeKiritsis/Csv.h        v1.0.0        MIT licensed
  *
  * ---------------------------------------------------------------------------
  * USAGE
@@ -95,8 +95,8 @@
 #include <stddef.h>
 #include <limits.h>
 
-#define CSV_VERSION_MAJOR 0
-#define CSV_VERSION_MINOR 2
+#define CSV_VERSION_MAJOR 1
+#define CSV_VERSION_MINOR 0
 #define CSV_VERSION_PATCH 0
 
 #define CSV__STRINGIFY_(x) #x
