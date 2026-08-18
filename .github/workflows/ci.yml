@@ -11,7 +11,7 @@ jobs:
         cc: [gcc, clang]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: check
         env:
           CC: ${{ matrix.cc }}
@@ -24,18 +24,29 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: ilammy/msvc-dev-cmd@v1
-      - name: build and run tests with MSVC
+      # One command per step: cmd does not stop at the first failing line, so a
+      # combined step reports only the last command's exit code and hides which
+      # command actually failed.
+      - name: build test_csv (MSVC /W4 /WX)
         shell: cmd
-        run: |
-          cl /nologo /W4 /WX /D_CRT_SECURE_NO_WARNINGS /Fe:test_csv.exe tests\test_csv.c
-          test_csv.exe
-          cl /nologo /W4 /WX /D_CRT_SECURE_NO_WARNINGS /Fe:test_spectrum.exe tests\test_spectrum.c
-          test_spectrum.exe
-      - name: single-TU and C++ configurations
+        run: cl /nologo /W4 /WX /D_CRT_SECURE_NO_WARNINGS /Fe:test_csv.exe tests\test_csv.c
+      - name: run test_csv
         shell: cmd
-        run: |
-          cl /nologo /W4 /WX /D_CRT_SECURE_NO_WARNINGS /DCSV_STATIC /c tests\core_only.c
-          cl /nologo /W4 /WX /D_CRT_SECURE_NO_WARNINGS /TP /c tests\core_only.c
-          cl /nologo /W4 /WX /D_CRT_SECURE_NO_WARNINGS /DCSV_NO_ALLOC /DCSV_NO_STDIO /c tests\core_only.c
+        run: test_csv.exe
+      - name: build test_spectrum (MSVC /W4 /WX)
+        shell: cmd
+        run: cl /nologo /W4 /WX /D_CRT_SECURE_NO_WARNINGS /Fe:test_spectrum.exe tests\test_spectrum.c
+      - name: run test_spectrum
+        shell: cmd
+        run: test_spectrum.exe
+      - name: single-TU configuration
+        shell: cmd
+        run: cl /nologo /W4 /WX /D_CRT_SECURE_NO_WARNINGS /DCSV_STATIC /c tests\core_only.c
+      - name: C++ configuration
+        shell: cmd
+        run: cl /nologo /W4 /WX /D_CRT_SECURE_NO_WARNINGS /TP /c tests\core_only.c
+      - name: freestanding core configuration
+        shell: cmd
+        run: cl /nologo /W4 /WX /D_CRT_SECURE_NO_WARNINGS /DCSV_NO_ALLOC /DCSV_NO_STDIO /c tests\core_only.c
