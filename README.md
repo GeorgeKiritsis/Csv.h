@@ -18,6 +18,17 @@
   <img alt="csv-spectrum" src="https://img.shields.io/badge/csv--spectrum-11%2F11-eb6834">
 </p>
 
+## Why csv.h?
+
+- **one C99 header** — nothing to build, configure or link
+- **zero allocations in the core** — the reader and writer never call `malloc`
+- **zero-copy** — fields are pointers into your buffer, not copies
+- **streaming** — arbitrarily large files through a fixed window
+- **RFC 4180 compliant**, plus the dialect knobs real-world files need
+- **optional table API** for when you do want `malloc` to do the work
+- **fuzzed and sanitizer-clean**, verified against csv-spectrum and Python's `csv`
+- **MIT licensed**
+
 ```c
 #define CSV_IMPLEMENTATION
 #include "csv.h"
@@ -97,13 +108,15 @@ Everything in it is a dozen lines or less: the reading section is
 
 ## Rationale
 
-There is no permissively-licensed CSV parser for plain C. The `single_file_libs`
-list has four, and all four are C++. The one mature C implementation, `libcsv`,
-is LGPL-2.1 and an autotools project — which rules it out of a statically linked
-proprietary binary and out of most firmware.
+Plenty of CSV parsers exist. This particular combination is harder to find in
+one place: plain C99 rather than C++ (the four CSV entries on the
+`single_file_libs` list are all C++), a single header rather than a build
+system, MIT rather than LGPL (`libcsv`, the best-known C implementation, is
+LGPL-2.1 and autotools — awkward in a statically linked proprietary binary and
+in most firmware), and no allocation unless you opt into it.
 
-This is that gap filled: one header, MIT, correct on the pathological inputs,
-and it does not allocate unless you ask it to.
+csv.h is aimed at that gap: one header, MIT, correct on the pathological
+inputs, and it does not allocate unless you ask it to.
 
 ## Contract
 
