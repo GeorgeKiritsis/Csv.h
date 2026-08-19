@@ -417,6 +417,19 @@ static void test_writer(void)
             free(big);
         }
     }
+
+    /* Sizing pass with no buffer at all. `needed` still counts, and
+     * nothing is written through the null pointer -- not even a
+     * zero-length memcpy, which is undefined however little it copies. */
+    {
+        csv_writer_init(&w, NULL, 0, NULL);
+        csv_write_cstr(&w, "");   /* empty field: the zero-length case */
+        csv_write_cstr(&w, "abc");
+        csv_write_row_end(&w);
+        CHECK(w.len == 0);
+        CHECK(w.needed == strlen(",abc\n"));
+        CHECK(w.err == CSV_ERR_NO_SPACE);
+    }
 }
 
 /* A tiny sink that appends to a fixed buffer, to exercise auto-flushing. */
@@ -795,6 +808,145 @@ static void test_edge_cases(void)
     }
 }
 
+/* rd.line at every row boundary, and once more when the parse stops. `chunk`
+ * of 0 parses in one shot; anything else feeds that many bytes at a time
+ * through a sliding window. Returns the number of samples taken. */
+static size_t line_trace(const char *in, size_t len, const csv_opts *o,
+                         size_t chunk, size_t *out, size_t cap)
+{
+    char       scratch[8192], window[8192];
+    csv_reader rd;
+    csv_str    row[64];
+    size_t     n, k = 0, wlen = 0, fed = 0;
+
+    if (chunk == 0) {
+        csv_reader_init_buf(&rd, o, scratch, sizeof scratch, in, len);
+        while (csv_next_row(&rd, row, CSV_ARRAY_LEN(row), &n) == CSV_EVENT_ROW)
+            if (k < cap) out[k++] = rd.line;
+        if (k < cap) out[k++] = rd.line;
+        return k;
+    }
+
+    csv_reader_init(&rd, o, scratch, sizeof scratch);
+    for (;;) {
+        size_t take = len - fed < chunk ? len - fed : chunk;
+        if (take > sizeof window - wlen) take = sizeof window - wlen;
+        memcpy(window + wlen, in + fed, take);
+        wlen += take;
+        fed  += take;
+        csv_reader_feed(&rd, window, wlen, fed == len);
+
+        for (;;) {
+            csv_event e = csv_next_row(&rd, row, CSV_ARRAY_LEN(row), &n);
+            if (e == CSV_EVENT_ROW) {
+                if (k < cap) out[k++] = rd.line;
+                continue;
+            }
+            if (e == CSV_EVENT_NEED_MORE) {
+                size_t consumed = csv_consumed(&rd);
+                memmove(window, window + consumed, wlen - consumed);
+                wlen -= consumed;
+                if (wlen == sizeof window) return k; /* record wider than the window */
+                break;
+            }
+            if (k < cap) out[k++] = rd.line;
+            return k; /* END or ERROR */
+        }
+    }
+}
+
+/* The line counter must not depend on how the input was sliced.
+ *
+ * It used to: csv__need_more() rewound the read offset to the start of the
+ * incomplete record but left `line` where it was, so every newline inside a
+ * quoted field of that record was counted again on each re-parse. A document
+ * of three lines reported line 5 or 6 depending on the chunk size. */
+static void test_line_numbers(void)
+{
+    static const char *const docs[] = {
+        "a,\"x\ny\",b,c,d\nq,w,e,r,t\n",
+        "\"multi\nline\nfield\",2\n3,4\n",
+        "a,b\r\n\"c\r\nd\",e\r\n",
+        "# comment\n\"x\ny\",1\n",
+        "a,b\n\n\"c\nd\",e\n",
+        "\"never closed\nand\nstill running",
+        "\"a\"\"b\nc\",\"d\ne\"\nf,g\n"
+    };
+    size_t   want[64], got[64], i, c, j, nw, ng;
+    csv_opts o = csv_opts_default();
+
+    o.comment = '#';
+    for (i = 0; i < CSV_ARRAY_LEN(docs); i++) {
+        g_case = docs[i];
+        nw = line_trace(docs[i], strlen(docs[i]), &o, 0, want, CSV_ARRAY_LEN(want));
+        for (c = 1; c <= 16; c++) {
+            ng = line_trace(docs[i], strlen(docs[i]), &o, c, got,
+                            CSV_ARRAY_LEN(got));
+            CHECK(ng == nw);
+            for (j = 0; j < (ng < nw ? ng : nw); j++)
+                CHECK(got[j] == want[j]);
+        }
+    }
+    g_case = NULL;
+
+    /* Consistent is not the same as correct, so pin the absolute values too. */
+    {
+        static const char doc[] = "a,\"x\ny\",b\nc,d,e\n";
+        size_t t[8];
+        CHECK(line_trace(doc, sizeof doc - 1, NULL, 0, t, CSV_ARRAY_LEN(t)) == 3);
+        CHECK(t[0] == 3); /* record 1 spans lines 1-2, so line 3 comes next */
+        CHECK(t[1] == 4);
+        CHECK(t[2] == 4);
+    }
+}
+
+/* UTF-16 and UTF-32 are not byte-oriented, so parsing them a byte at a time
+ * yields fields full of NUL padding and no error at all. They are rejected by
+ * their byte-order mark instead. */
+static void test_encoding(void)
+{
+    static const char utf16le[] = "\xFF\xFE" "a\0,\0b\0\n\0";
+    static const char utf16be[] = "\xFE\xFF" "\0a\0,\0b\0\n";
+    static const char utf32le[] = "\xFF\xFE\0\0" "a\0\0\0";
+    static const char utf32be[] = "\0\0\xFE\xFF" "\0\0\0a";
+    char     out[512];
+    size_t   c;
+    csv_opts o   = csv_opts_default();
+    csv_opts raw = csv_opts_default();
+
+    raw.flags = CSV_FLAG_NO_BOM;
+
+    CHECK(dump(utf16le, sizeof utf16le - 1, &o, out) == CSV_ERR_ENCODING);
+    CHECK(dump(utf16be, sizeof utf16be - 1, &o, out) == CSV_ERR_ENCODING);
+    CHECK(dump(utf32le, sizeof utf32le - 1, &o, out) == CSV_ERR_ENCODING);
+    CHECK(dump(utf32be, sizeof utf32be - 1, &o, out) == CSV_ERR_ENCODING);
+
+    /* The verdict cannot depend on how the mark was split across feeds. */
+    for (c = 1; c <= 6; c++) {
+        CHECK(dump_streamed(utf16le, sizeof utf16le - 1, &o, c, out)
+              == CSV_ERR_ENCODING);
+        CHECK(dump_streamed(utf32be, sizeof utf32be - 1, &o, c, out)
+              == CSV_ERR_ENCODING);
+    }
+
+    /* CSV_FLAG_NO_BOM means "do not interpret byte-order marks", which opts
+     * out of the rejection as well: the bytes are then just bytes. */
+    CHECK(dump(utf16le, sizeof utf16le - 1, &raw, out) == CSV_OK);
+
+    /* UTF-8 is unaffected, with or without a BOM. */
+    CHECK(dump("\xEF\xBB\xBF" "a,b\n", 7, &o, out) == CSV_OK);
+    CHECK_EQ_STR(out, "a|b/");
+    CHECK(dump("\xC3\xA9,\xE2\x82\xAC\n", 7, &o, out) == CSV_OK);
+
+    /* A lone 0xFF or 0xFE byte is data, not a mark. */
+    CHECK(dump("\xFF,a\n", 4, &o, out) == CSV_OK);
+    CHECK(dump("\xFE\n", 2, &o, out) == CSV_OK);
+    CHECK(dump("\0\0,a\n", 5, &o, out) == CSV_OK);
+
+    CHECK(strcmp(csv_strerror(CSV_ERR_ENCODING),
+                 "input is UTF-16 or UTF-32, not bytes") == 0);
+}
+
 static void test_misc(void)
 {
     CHECK(strcmp(csv_strerror(CSV_OK), "ok") == 0);
@@ -803,7 +955,7 @@ static void test_misc(void)
     CHECK(csv_str_eq(CSV_LIT("abc"), csv_str_make("abc", 3)));
     CHECK(!csv_str_eq(CSV_LIT("abc"), CSV_LIT("abd")));
     CHECK(csv_str_eq(CSV_LIT(""), csv_str_make(NULL, 0)));
-    CHECK(strcmp(CSV_VERSION_STRING, "1.0.0") == 0);
+    CHECK(strcmp(CSV_VERSION_STRING, "1.1.0") == 0);
 }
 
 int main(void)
@@ -825,6 +977,8 @@ int main(void)
     RUN(test_dialects);
     RUN(test_inplace);
     RUN(test_edge_cases);
+    RUN(test_line_numbers);
+    RUN(test_encoding);
     RUN(test_misc);
     printf("\n%d checks, %d failures\n", g_checks, g_fails);
     return g_fails != 0;
