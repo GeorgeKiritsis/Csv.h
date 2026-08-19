@@ -3,7 +3,9 @@
  *
  * Three properties are asserted on every input:
  *   1. the parser never crashes, reads out of bounds or loops forever;
- *   2. a document parses identically however it is sliced into chunks;
+ *   2. a document parses identically however it is sliced into chunks,
+ *      line numbers included -- rd.line is part of the observable output,
+ *      and comparing only field bytes once let a counting bug through;
  *   3. parse -> write -> parse is the identity on the field values.
  *
  * Build:  make fuzz && ./build/fuzz_csv corpus -max_total_time=60
@@ -36,10 +38,24 @@ static int ser(char **p, const char *end, csv_str s, char tag)
     return 1;
 }
 
+/* Row terminator for the serialised form. It carries rd.line so that the
+ * chunking-equivalence property covers the line counter and not just the
+ * field bytes. The round-trip property passes lines = 0: rewriting a
+ * document legitimately changes its line structure (an unterminated final
+ * record gains a terminator), so only the field values are comparable. */
+static int ser_rowend(char **p, const char *end, const csv_reader *rd,
+                      int lines)
+{
+    if ((size_t)(end - *p) < 32) return 0;
+    if (lines) *p += sprintf(*p, "@%zu", rd->line);
+    *(*p)++ = ';';
+    return 1;
+}
+
 /* Both parsers below work at row granularity. That matters: a row that is cut
  * short by an error contributes nothing, so the two sides stay comparable. */
 static csv_error parse_oneshot(const char *d, size_t n, const csv_opts *o,
-                               char *buf, size_t cap)
+                               char *buf, size_t cap, int lines)
 {
     csv_reader rd;
     char      *p = buf, *end = buf + cap;
@@ -51,7 +67,7 @@ static csv_error parse_oneshot(const char *d, size_t n, const csv_opts *o,
         if (csv_next_row(&rd, row, CSV_ARRAY_LEN(row), &k) != CSV_EVENT_ROW) break;
         for (i = 0; i < k; i++)
             if (!ser(&p, end, row[i], 'f')) { *p = 0; return rd.err; }
-        if (p < end) *p++ = ';'; else break;
+        if (!ser_rowend(&p, end, &rd, lines)) break;
     }
     *p = 0;
     return rd.err;
@@ -83,7 +99,7 @@ static csv_error parse_streamed(const char *d, size_t n, const csv_opts *o,
             if (e == CSV_EVENT_ROW) {
                 for (i = 0; i < k; i++)
                     if (!ser(&p, end, row[i], 'f')) { *p = 0; return rd.err; }
-                if (p < end) *p++ = ';';
+                if (!ser_rowend(&p, end, &rd, 1)) { *p = 0; return rd.err; }
                 continue;
             }
             if (e == CSV_EVENT_NEED_MORE) {
@@ -118,7 +134,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     if (cfg & 0x40) o.comment   = '#';
 
     /* (1)+(2): chunked parsing must agree with one-shot parsing. */
-    ea = parse_oneshot((const char *)data, size, &o, g_a, SER_CAP - 1);
+    ea = parse_oneshot((const char *)data, size, &o, g_a, SER_CAP - 1, 1);
     eb = parse_streamed((const char *)data, size, &o, 1 + (cfg >> 5), g_b,
                         SER_CAP - 1);
     if (ea != eb || strcmp(g_a, g_b) != 0) {
@@ -140,7 +156,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
          * off so the round-trip property is actually well defined. */
         po.delimiter = o.delimiter;
         po.flags     = CSV_FLAG_NO_BOM;
-        if (parse_oneshot((const char *)data, size, &po, g_a, SER_CAP - 1) != CSV_OK)
+        if (parse_oneshot((const char *)data, size, &po, g_a, SER_CAP - 1, 0)
+            != CSV_OK)
             return 0;
 
         csv_writer_init(&w, g_out, sizeof g_out, &po);
@@ -153,7 +170,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         }
         if (w.err != CSV_OK) return 0; /* output buffer exhausted, not a bug */
 
-        if (parse_oneshot(g_out, w.len, &po, g_b, SER_CAP - 1) != CSV_OK ||
+        if (parse_oneshot(g_out, w.len, &po, g_b, SER_CAP - 1, 0) != CSV_OK ||
             strcmp(g_a, g_b) != 0) {
             fprintf(stderr, "round-trip mismatch\n");
             abort();
