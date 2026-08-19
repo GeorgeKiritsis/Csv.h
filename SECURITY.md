@@ -4,13 +4,21 @@
 
 | Version | Supported |
 | ------- | --------- |
-| 1.0.x   | :white_check_mark: |
+| 1.1.x   | :white_check_mark: |
+| 1.0.x   | :x: (superseded by 1.1.x) |
 | < 1.0   | :x: (pre-release, do not use) |
 
 Only the latest release gets fixes. Because `csv.h` is vendored, meaning you
 copy the file into your own tree, there is no package manager that can push a
 fix to you. If a security release happens, you have to re-copy the header
 yourself. Watch the repository for releases if that matters to you.
+
+**1.1.0 contains no security fixes.** Nothing in 1.0.0 is known to be
+memory-unsafe. The one undefined-behaviour fix in 1.1.0 -- a zero-length
+`memcpy()` through a null pointer in the writer's sizing pass -- is reachable
+from the calling program rather than from input, and no compiler is known to
+miscompile it. Upgrade for the line-numbering fix and the encoding check, not
+out of urgency.
 
 ## Threat model
 
@@ -60,6 +68,10 @@ break one with input alone, that is a vulnerability:
   `CSV_ERR_NO_SPACE` and keeps counting the size it would have needed
 - errors are sticky. After a failure the reader keeps returning
   `CSV_EVENT_ERROR` rather than producing further records
+- a document yields the same fields, the same error and the same line numbers
+  however it is sliced into chunks. Both the test suite and the fuzzer assert
+  this on every input, so a parse that depends on where your reads happened to
+  land is a bug
 
 ## Known limitations that are not bugs
 
@@ -77,9 +89,22 @@ break one with input alone, that is a vulnerability:
   formula when the file is opened in a spreadsheet. If you write CSV that
   someone will open in Excel or Sheets, sanitise those fields yourself before
   passing them to the writer. Quoting does not prevent this.
-- **No encoding validation.** The parser is byte-oriented. It will happily
-  carry invalid UTF-8 through to your fields. Validate the encoding if your
-  consumers require it.
+- **Encoding is checked only far enough to refuse what cannot work.** A
+  document opening with a UTF-16 or UTF-32 byte-order mark is rejected with
+  `CSV_ERR_ENCODING`, because parsing one a byte at a time would hand back
+  fields full of NUL padding and report no error at all. Everything else is
+  treated as bytes: invalid UTF-8 is carried through untouched, and a
+  *BOM-less* UTF-16 or UTF-32 document is indistinguishable from binary noise
+  and is **not** detected. Transcode to UTF-8 first, and validate the encoding
+  yourself if your consumers require it.
+- **A field may contain NUL bytes.** `csv_str` is a `(pointer, length)` pair
+  and is never NUL-terminated, so `a,b\0c` gives you a three-byte second field
+  with the NUL intact. That is deliberate -- truncating at the first NUL would
+  lose data -- but it means handing `.ptr` to anything that expects a C string
+  silently truncates the value, which is a classic way for a filter and the
+  thing it protects to disagree about what a record says. Copy through the
+  length, and reject or escape embedded NULs if a downstream consumer treats
+  them as terminators.
 
 ## Reporting a vulnerability
 
