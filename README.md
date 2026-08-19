@@ -61,6 +61,7 @@ Copy `csv.h` into your tree. There is nothing to build, configure or link.
 - [Table layer](#table-layer-optional)
 - [Dialects](#dialects)
 - [Malformed input](#malformed-input)
+- [Encoding](#encoding)
 - [Performance](#performance)
 - [Footprint](#footprint)
 - [Portability and configuration](#portability-and-configuration)
@@ -69,6 +70,7 @@ Copy `csv.h` into your tree. There is nothing to build, configure or link.
 - [API](#api)
 - [Implementation notes](#implementation-notes)
 - [Non-goals](#non-goals)
+- [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -273,6 +275,7 @@ that already own the I/O.
 | **Allocation** | none in the reader or writer, ever. `malloc` appears only in the optional table layer, which `-DCSV_NO_ALLOC` removes. |
 | **Copying** | fields alias your buffer. Only `""` un-escaping writes bytes, and in-place mode writes them over the field itself. |
 | **Mutation** | your input is `const` unless you opt in with `csv_reader_init_mut()`. |
+| **Encoding** | bytes in, bytes out. Any ASCII-compatible byte encoding parses, and a NUL byte is ordinary field data. UTF-16 and UTF-32 are refused by their BOM rather than silently mis-parsed. |
 | **Reentrancy** | no globals, no thread-local storage, no `errno`, no locale, no signals. Two threads, two `csv_reader` objects, no synchronisation. |
 | **Complexity** | one pass, O(n) in document bytes. A short read re-parses at most one record. |
 | **Stack** | ≤ 192 bytes per call, no recursion, no `alloca`, no VLAs. |
@@ -483,6 +486,45 @@ BOM consumption is deliberately lossy: a field whose first bytes are `EF BB BF`
 loses them if it is later written back at offset 0. Set `CSV_FLAG_NO_BOM` for
 byte-exact round trips.
 
+## Encoding
+
+The parser works on bytes. The delimiter, the quote character and the line
+terminators are single bytes, and everything between them is passed through
+untouched, so any encoding that agrees with ASCII over `0x00`-`0x7F` parses
+correctly: UTF-8, ASCII, Latin-1, Windows-1252. Fields come back as
+`(pointer, length)` and are never NUL-terminated, so a NUL byte inside a field
+is data like any other:
+
+```c
+/* a,b\0c\n  --  the second field is three bytes long */
+csv_str f = row[1];
+assert(f.len == 3 && f.ptr[1] == 0);
+```
+
+UTF-16 and UTF-32 are a different matter: they are not byte-oriented. Every
+ASCII character carries one or three NUL bytes of padding, so a byte parser
+handed such a document returns fields full of mojibake and reports no error at
+all. The reader refuses them instead:
+
+| First bytes | Result |
+| --- | --- |
+| `EF BB BF` | UTF-8 BOM, skipped |
+| `FF FE` | `CSV_ERR_ENCODING` (UTF-16LE, UTF-32LE) |
+| `FE FF` | `CSV_ERR_ENCODING` (UTF-16BE) |
+| `00 00 FE FF` | `CSV_ERR_ENCODING` (UTF-32BE) |
+| anything else | parsed as bytes |
+
+Only the byte-order mark is examined, only at offset 0, and only once. A
+BOM-less UTF-16 document is indistinguishable from binary noise and is **not**
+detected, so transcode to UTF-8 first -- `iconv`, `MultiByteToWideChar()`,
+Python's `codecs` -- and hand the result to the parser. `CSV_FLAG_NO_BOM`
+switches off byte-order-mark interpretation altogether, rejection included, for
+when you want the bytes regardless.
+
+Beyond that the parser takes no view of your text: no UTF-8 validation, no
+normalisation, no case folding, no locale. Invalid UTF-8 passes through
+byte for byte.
+
 ## Performance
 
 <picture>
@@ -519,7 +561,7 @@ about, use one of those; this is a scalar parser that happens to be quick.
 per-instance state (no other allocation happens in the core):
   csv_str     16 B
   csv_opts    12 B
-  csv_reader 392 B   (256 of it is the byte-class table)
+  csv_reader 400 B   (256 of it is the byte-class table)
   csv_writer  72 B
   csv_table   56 B
 
@@ -595,7 +637,7 @@ Or have CMake fetch a pinned release for you (CMake ≥ 3.18):
 include(FetchContent)
 FetchContent_Declare(csv_h_src
   GIT_REPOSITORY https://github.com/GeorgeKiritsis/Csv.h
-  GIT_TAG        v1.0.0)
+  GIT_TAG        v1.1.0)
 FetchContent_MakeAvailable(csv_h_src)
 
 add_library(csv_h INTERFACE)
@@ -625,15 +667,16 @@ been thrown at it:
 
 - **55k assertions.** Every table-driven case runs six times: whole buffer, then
   re-fed 1, 2, 3, 4 and 5 bytes at a time. A document must parse identically
-  however it is sliced.
+  however it is sliced, line numbers and all.
 - **csv-spectrum 11/11.** The community acid-test corpus, vendored under
   `tests/spectrum/` and checked in all three modes: buffer, in-place, and
   streamed a byte at a time. `make spectrum-fetch` re-downloads it from upstream
   and diffs, so you need not take the vendored copies on trust.
 - **libFuzzer**, asserting three properties per input: no crash,
-  chunk-independence, and `parse → write → parse` identity. 16.3 M executions
-  clean on the current tree (3 workers, ASan + UBSan, 1400-input corpus). It
-  found two real defects during development, both fixed.
+  chunk-independence -- `rd.line` included, not only the field bytes -- and
+  `parse → write → parse` identity. 16.3 M executions clean (3 workers, ASan +
+  UBSan, 1400-input corpus). It found two real defects during development, both
+  fixed.
 - **Differential testing** against Python's `csv` module over thousands of random
   hostile documents, and against libcsv over ~19 M fields in the benchmark.
 
@@ -714,11 +757,31 @@ message strings cannot drift apart.
 ## Non-goals
 
 Type conversion, UTF-8 validation, locale, encoding transcoding, an index or a
-query layer, and threads. This library turns bytes into fields; anything that
-would need a decision about your data belongs on your side of the boundary.
+query layer, and threads. Transcoding in particular is refused loudly rather
+than faked: see [Encoding](#encoding). This library turns bytes into fields;
+anything that would need a decision about your data belongs on your side of
+the boundary.
 
 Also not done, but not refused: SIMD scanning, `mmap` helpers, a Windows-1252 /
 UTF-16 front end.
+
+## Roadmap
+
+**The single header is not the end state.** The next step is to ship this as a
+conventional library as well: the same code split into `csv.h` and `csv.c`,
+built and installed the normal way, so it can be compiled once, linked against,
+packaged, and used across translation units without the `CSV_IMPLEMENTATION`
+dance. That is the shape most C projects actually want, and "header-only" is a
+distribution choice rather than a design goal.
+
+The single-file drop-in is not going away -- copy one file and build, with no
+configuration and nothing to link, is the reason a lot of people pick this over
+the alternatives. It stops being the *only* way to consume the library.
+
+Under consideration after that, none of it promised: an encoding front end that
+transcodes UTF-16 and Windows-1252 into the parser rather than rejecting them,
+SIMD delimiter scanning behind a runtime check, and `mmap` helpers for the
+read-the-whole-file case. Issues and PRs on any of these are welcome.
 
 ## Contributing
 
