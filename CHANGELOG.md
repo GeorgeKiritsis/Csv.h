@@ -2,6 +2,36 @@
 
 All notable changes to csv.h. Versions follow [semver](https://semver.org/).
 
+## 1.1.0
+
+**Added**
+
+- `CSV_ERR_ENCODING`. A document opening with a UTF-16 or UTF-32 byte-order
+  mark (`FF FE`, `FE FF`, `00 00 FE FF`) is now rejected instead of parsed a
+  byte at a time, which used to yield fields full of NUL padding and no error
+  at all. `CSV_FLAG_NO_BOM` opts out along with the rest of BOM handling.
+- `CSV_ARRAY_LEN()` is a compile-time error when handed a pointer rather than
+  an array. `sizeof(p) / sizeof(p[0])` on a decayed pointer silently computes
+  a nonsense capacity, and `csv_foreach_row()` hides the macro, so a heap-
+  allocated row array used to parse as a zero-column document. C++ gets a
+  reference-to-array probe, GCC and Clang a negative-width bitfield; MSVC in C
+  mode has no way to tell the two types apart and keeps the old behaviour.
+
+**Fixed**
+
+- `rd.line` ran ahead in streaming mode. `csv__need_more()` rewound the read
+  offset to the start of the incomplete record but not the line counter, so
+  every newline inside a quoted field of that record was counted again on each
+  re-parse: a three-line document could report line 5 or 6 depending on where
+  the chunk boundaries fell. Line numbers are now identical however the input
+  is sliced, and the fuzzer's chunking-equivalence property covers `rd.line`
+  rather than field bytes alone.
+- The writer no longer calls `memcpy()` through a null buffer pointer. A sizing
+  pass (`csv_writer_init(&w, NULL, 0, NULL)`) writing an empty field reached
+  `memcpy(NULL, src, 0)`: C requires a valid pointer argument however few
+  bytes are copied, and UBSan flags it wherever `<string.h>` declares the
+  parameter nonnull.
+
 ## 1.0.0
 
 First stable release. The API documented in the README is now covered by
