@@ -1,6 +1,6 @@
 /*
  * csv.h - RFC 4180 CSV reader and writer in a single C99 header.
- * https://github.com/GeorgeKiritsis/Csv.h        v1.0.0        MIT licensed
+ * https://github.com/GeorgeKiritsis/Csv.h        v1.1.0        MIT licensed
  *
  * ---------------------------------------------------------------------------
  * USAGE
@@ -96,7 +96,7 @@
 #include <limits.h>
 
 #define CSV_VERSION_MAJOR 1
-#define CSV_VERSION_MINOR 0
+#define CSV_VERSION_MINOR 1
 #define CSV_VERSION_PATCH 0
 
 #define CSV__STRINGIFY_(x) #x
@@ -170,7 +170,34 @@ typedef struct csv_str {
 #define CSV_FMT       "%.*s"
 #define CSV_ARG(s)    (int)(s).len, (s).ptr
 #define CSV_LIT(lit)  csv_str_make((lit), sizeof(lit) - 1)
-#define CSV_ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
+
+#ifdef __cplusplus
+} /* extern "C" -- a template may not have C language linkage */
+template <typename T, size_t N> char (&csv__array_len_probe(T (&)[N]))[N];
+extern "C" {
+#endif
+
+/* Element count of an array, and a compile-time error for anything else.
+ *
+ * `sizeof(a) / sizeof(a[0])` on a decayed pointer silently yields 0 or 1,
+ * and the mistake is easy to make because csv_foreach_row() hides the macro:
+ * pass it a `csv_str *row = malloc(...)` and the capacity it computes has
+ * nothing to do with the allocation. C++ gets a reference-to-array probe,
+ * GCC and Clang get a negative-width bitfield. MSVC in C mode cannot tell
+ * the two types apart at all, so there the bare division still stands. */
+#if defined(__cplusplus)
+#   define CSV_ARRAY_LEN(a) sizeof(csv__array_len_probe(a))
+#elif defined(__GNUC__) || defined(__clang__)
+#   define CSV__NOT_A_POINTER(a)                                               \
+        (0 * (int)sizeof(struct {                                              \
+            int csv__argument_must_be_an_array :                               \
+                2 * !__builtin_types_compatible_p(__typeof__(a),               \
+                                                  __typeof__(&(a)[0])) - 1;    \
+        }))
+#   define CSV_ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]) + CSV__NOT_A_POINTER(a))
+#else
+#   define CSV_ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 
 CSV_API csv_str csv_str_make(const char *p, size_t n);
 CSV_API int     csv_str_eq(csv_str a, csv_str b);
@@ -189,7 +216,8 @@ CSV_API int     csv_str_eq_cstr(csv_str a, const char *z);
     X(CSV_ERR_NO_SPACE,       "scratch or output buffer too small")            \
     X(CSV_ERR_TOO_MANY_COLS,  "row has more fields than the caller's array")   \
     X(CSV_ERR_NOMEM,          "out of memory")                                 \
-    X(CSV_ERR_IO,             "i/o error")
+    X(CSV_ERR_IO,             "i/o error")                                     \
+    X(CSV_ERR_ENCODING,       "input is UTF-16 or UTF-32, not bytes")
 
 #define CSV_EVENT_LIST(X)                                                      \
     X(CSV_EVENT_FIELD,     "field")                                            \
@@ -263,7 +291,7 @@ typedef struct csv_reader {
     csv_opts      opts;
     const char   *buf;
     char         *mut;   /* non-NULL in in-place mode: same memory as buf */
-    size_t        len, pos, row_start;
+    size_t        len, pos, row_start, line_start;
     char         *scratch;
     size_t        scratch_cap, scratch_len;
     unsigned      skip_left;
@@ -566,6 +594,16 @@ CSV_API void csv_reader_init(csv_reader *r, const csv_opts *opts,
         r->stop[(unsigned char)r->opts.quote] = 1;
 }
 
+/* Mark a record boundary. The offset and the line counter have to move
+ * together: csv__need_more() rewinds to this point and the record is then
+ * parsed again from the start, so any line already counted inside it would
+ * otherwise be counted a second time. */
+CSV_INLINE void csv__mark_record(csv_reader *r, size_t pos)
+{
+    r->row_start  = pos;
+    r->line_start = r->line;
+}
+
 CSV_API void csv_reader_feed(csv_reader *r, const void *data, size_t len,
                              int is_final)
 {
@@ -578,8 +616,8 @@ CSV_API void csv_reader_feed(csv_reader *r, const void *data, size_t len,
     r->buf         = (const char *)data;
     r->len         = len;
     r->pos         = 0;
-    r->row_start   = 0;
     r->final       = is_final;
+    csv__mark_record(r, 0);
     if (!(r->opts.flags & CSV_FLAG_KEEP_SCRATCH)) r->scratch_len = 0;
     if (r->state == CSV__S_DONE && len) r->state = CSV__S_ROW_BEGIN;
 }
@@ -610,6 +648,7 @@ CSV_INLINE csv_event csv__need_more(csv_reader *r)
 {
     CSV_ASSERT(!r->final);
     r->pos   = r->row_start;
+    r->line  = r->line_start;
     r->state = CSV__S_ROW_BEGIN;
     return CSV_EVENT_NEED_MORE;
 }
@@ -651,7 +690,7 @@ CSV_INLINE int csv__skip_noise(csv_reader *r)
                 r->line++;
                 r->skip_left--;
             }
-            r->row_start = r->pos;
+            csv__mark_record(r, r->pos);
             continue;
         }
 
@@ -665,12 +704,12 @@ CSV_INLINE int csv__skip_noise(csv_reader *r)
             }
             r->pos = (size_t)(nl - r->buf) + 1;
             r->line++;
-            r->row_start = r->pos;
+            csv__mark_record(r, r->pos);
             continue;
         }
         if ((r->opts.flags & CSV_FLAG_SKIP_EMPTY) && (c == '\n' || c == '\r')) {
             if (!csv__eat_eol(r)) return 0;
-            r->row_start = r->pos;
+            csv__mark_record(r, r->pos);
             continue;
         }
         return 1;
@@ -923,8 +962,8 @@ CSV_API csv_event csv_next(csv_reader *r)
             return CSV_EVENT_END;
 
         case CSV__S_ROW_BEGIN: {
-            r->col       = 0;
-            r->row_start = r->pos;
+            r->col = 0;
+            csv__mark_record(r, r->pos);
             if (!(r->opts.flags & CSV_FLAG_KEEP_SCRATCH)) r->scratch_len = 0;
 
             if (!r->bom_done && !(r->opts.flags & CSV_FLAG_NO_BOM)) {
@@ -932,23 +971,42 @@ CSV_API csv_event csv_next(csv_reader *r)
                  * CHAR_MAX where char is signed, and MSVC's C4310 flags the
                  * casts under /W4 /WX. [] not [3]: C++ needs room for the
                  * NUL, and memcmp only ever reads the first three bytes. */
-                static const char bom[] = "\xEF\xBB\xBF";
-                if (r->len - r->pos >= 3) {
-                    if (CSV_MEMCMP(r->buf + r->pos, bom, 3) == 0) r->pos += 3;
-                    r->bom_done = 1;
-                    r->row_start = r->pos;
-                } else if (!r->final) {
-                    return csv__need_more(r);
-                } else {
-                    r->bom_done = 1;
+                static const char bom[]     = "\xEF\xBB\xBF";
+                static const char utf16le[] = "\xFF\xFE";
+                static const char utf16be[] = "\xFE\xFF";
+                static const char utf32be[] = "\0\0\xFE\xFF";
+                size_t avail;
+
+                if (r->len - r->pos < 4 && !r->final) return csv__need_more(r);
+                avail = r->len - r->pos;
+
+                /* UTF-16 and UTF-32 are not byte-oriented encodings: every
+                 * ASCII character carries NUL padding, so a byte parser
+                 * would hand back fields full of mojibake and report no
+                 * error at all. Refuse them by their byte-order mark
+                 * instead. UTF-32LE opens with the UTF-16LE mark, which is
+                 * why one message covers both. Transcode to UTF-8 first, or
+                 * set CSV_FLAG_NO_BOM to parse the bytes regardless. */
+                if ((avail >= 2 &&
+                     (CSV_MEMCMP(r->buf + r->pos, utf16le, 2) == 0 ||
+                      CSV_MEMCMP(r->buf + r->pos, utf16be, 2) == 0)) ||
+                    (avail >= 4 &&
+                     CSV_MEMCMP(r->buf + r->pos, utf32be, 4) == 0)) {
+                    csv__fail(r, CSV_ERR_ENCODING);
+                    return CSV_EVENT_ERROR;
                 }
+
+                if (avail >= 3 && CSV_MEMCMP(r->buf + r->pos, bom, 3) == 0)
+                    r->pos += 3;
+                r->bom_done = 1;
+                csv__mark_record(r, r->pos);
             }
 
             if (!csv__skip_noise(r)) return csv__need_more(r);
 
             if (r->pos >= r->len) {
                 if (!r->final) return csv__need_more(r);
-                r->row_start = r->pos;
+                csv__mark_record(r, r->pos);
                 r->state = CSV__S_DONE;
                 return CSV_EVENT_END;
             }
@@ -1060,8 +1118,14 @@ CSV_INLINE void csv__put(csv_writer *w, const char *d, size_t n)
             return;
         }
     }
-    CSV_MEMCPY(w->buf + w->len, d, n);
-    w->len += n;
+    /* Guarded, not merely redundant: a sizing pass runs with buf == NULL
+     * and cap == 0, where an empty field would reach memcpy(NULL, d, 0).
+     * C says a pointer argument must be valid however few bytes are copied,
+     * and where <string.h> declares memcpy nonnull, UBSan reports it. */
+    if (n) {
+        CSV_MEMCPY(w->buf + w->len, d, n);
+        w->len += n;
+    }
 }
 
 CSV_INLINE int csv__needs_quotes(const csv_writer *w, const char *s, size_t n)
